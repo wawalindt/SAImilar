@@ -1,7 +1,10 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // Allow CORS if needed, or rely on Vercel's same-origin handling for internal APIs
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
   if (req.method === 'OPTIONS') {
     res.status(200).end();
     return;
@@ -11,11 +14,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
 
-  const { endpoint, params } = req.body;
+  const { endpoint, params } = req.body || {};
   const apiKey = process.env.TMDB_API_KEY;
 
   if (!apiKey) {
-    return res.status(500).json({ error: 'Server configuration error: TMDB_API_KEY missing' });
+    return res.status(500).json({ error: 'TMDB_API_KEY missing' });
   }
 
   if (!endpoint) {
@@ -23,16 +26,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const baseUrl = 'https://api.themoviedb.org/3';
-  
-  // Construct query parameters
   const queryParams = new URLSearchParams({
     api_key: apiKey,
-    ...params
+    ...(params || {}),
   });
 
   try {
-    const tmdbRes = await fetch(`${baseUrl}${endpoint}?${queryParams}`);
-    
+    const tmdbRes = await fetch(`${baseUrl}${endpoint}?${queryParams.toString()}`);
     if (!tmdbRes.ok) {
       return res.status(tmdbRes.status).json({ error: `TMDB Error: ${tmdbRes.statusText}` });
     }
