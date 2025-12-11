@@ -1,43 +1,59 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { GoogleGenAI } from "@google/genai";
+export const config = {
+  runtime: 'edge',
+};
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+export default async function handler(req: Request) {
+  const corsHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  };
+
   if (req.method === 'OPTIONS') {
-    res.status(200).end();
-    return;
+    return new Response(null, { status: 200, headers: corsHeaders });
   }
-
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method Not Allowed' });
-  }
-
-  const { contents, systemInstruction, model, responseMimeType } = req.body;
-  const apiKey = process.env.GEMINI_API_KEY;
-
-  if (!apiKey) {
-    return res.status(500).json({ error: 'Server configuration error: GEMINI_API_KEY missing' });
-  }
-
-  const ai = new GoogleGenAI({ apiKey: apiKey });
 
   try {
-    const response = await ai.models.generateContent({
-      model: model || 'gemini-2.5-flash',
-      contents: contents,
-      config: {
-        systemInstruction: systemInstruction,
-        responseMimeType: responseMimeType
-      }
+    const API_KEY = process.env.GEMINI_API_KEY;
+
+    if (!API_KEY) {
+      return new Response(JSON.stringify({ error: 'Server configuration error: Gemini Key missing' }), { 
+        status: 500, 
+        headers: { 'Content-Type': 'application/json', ...corsHeaders } 
+      });
+    }
+
+    const { model, contents, config } = await req.json();
+    const targetModel = model || 'gemini-2.5-flash';
+
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${API_KEY}`;
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: contents,
+        generationConfig: {
+            responseMimeType: config?.responseMimeType,
+            temperature: 0.7,
+        },
+        systemInstruction: config?.systemInstruction ? {
+             parts: [{ text: config.systemInstruction }] 
+        } : undefined
+      }),
     });
 
-    // Return the text and usage metadata
-    return res.status(200).json({
-      text: response.text,
-      usageMetadata: response.usageMetadata
+    const data = await response.json();
+
+    return new Response(JSON.stringify(data), {
+      status: response.status,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
     });
 
   } catch (error: any) {
-    console.error("Gemini API Error:", error);
-    return res.status(500).json({ error: "Gemini API Failed", details: error.message });
+    return new Response(JSON.stringify({ error: error.message }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
   }
 }

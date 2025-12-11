@@ -1,20 +1,3 @@
-
-// src/config.ts
-
-/**
- * CONFIGURATION
- * 
- * Sensitive API Keys have been moved to Firebase Cloud Functions (Secret Manager).
- * Do not add real keys here.
- */
-
-export const API_KEYS = {
-  // Keys are injected on the backend
-  GEMINI: '', 
-  PERPLEXITY: '',
-  TMDB: '',
-};
-
 // Firebase configuration
 export const FIREBASE_CONFIG = {
   apiKey: "AIzaSyAQhgQhGB83nGu5Xz7zA1Z2cVAohBVoVTA",
@@ -26,11 +9,19 @@ export const FIREBASE_CONFIG = {
   measurementId: "G-V8XGJF55SH"
 };
 
-// Validation checks only Firebase config now
+// API Keys configuration
+// Если здесь есть ключи, приложение будет использовать их напрямую (Direct API Call).
+export const API_KEYS = {
+  GEMINI: '', 
+  PERPLEXITY: '',
+  TMDB: '',
+};
+
 export const validateApiKeys = () => {
-  if (!FIREBASE_CONFIG.apiKey) {
-    console.warn('⚠️ Missing Firebase Configuration');
-    return false;
+  if (API_KEYS.TMDB && API_KEYS.GEMINI) {
+    console.log('🔓 Using Client-Side Keys from config.ts');
+    return true;
   }
+  console.log('🔒 Using Server-Side Proxies (/api/*)');
   return true;
 };

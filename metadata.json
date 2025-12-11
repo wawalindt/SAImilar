@@ -1,6 +1,6 @@
 {
-  "name": "SAImilar v.0.98 ",
-  "description": "09.12 - работает БД (нужны правки: user вместо ника, нет списка юзеров в админке) - перенос при в ф-ии БД",
+  "name": "SAImilar v.0.99 depl Vercel",
+  "description": "11.12 - работает БД (нужны правки: user вместо ника, нет списка юзеров в админке) - переделка на Vercel func",
   "requestFramePermissions": [
     "microphone"
   ]

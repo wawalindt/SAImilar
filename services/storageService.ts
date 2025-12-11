@@ -14,11 +14,11 @@ export const getSettings = (): AppSettings => {
   try {
     const data = localStorage.getItem(KEYS.SETTINGS);
     const defaultSettings: AppSettings = { 
-        provider: 'perplexity',
-        apiKeys: {}, // No hardcoded keys
+        provider: 'perplexity', // Default to perplexity for GPT-5.1
+        apiKeys: {}, 
         language: 'ru',
         theme: 'dark',
-        activeModel: 'gpt4' 
+        activeModel: 'gpt4' // Default to GPT-5.1 (mapped to sonar-pro)
     };
     return data ? { ...defaultSettings, ...JSON.parse(data) } : defaultSettings;
   } catch {

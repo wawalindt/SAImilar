@@ -14,30 +14,45 @@ export default async function handler(req: Request) {
   }
 
   try {
-    const API_KEY = process.env.PERPLEXITY_API_KEY;
-
-    if (!API_KEY) {
-      return new Response(JSON.stringify({ error: 'Server configuration error: Perplexity Key missing' }), { 
+    const TMDB_API_KEY = process.env.TMDB_API_KEY; 
+    
+    if (!TMDB_API_KEY) {
+      return new Response(JSON.stringify({ error: 'Server configuration error: TMDB Key missing' }), { 
         status: 500, 
         headers: { 'Content-Type': 'application/json', ...corsHeaders } 
       });
     }
 
-    const body = await req.json();
+    const { endpoint, params } = await req.json();
 
-    const response = await fetch('https://api.perplexity.ai/chat/completions', {
-      method: 'POST',
+    if (!endpoint) {
+      return new Response(JSON.stringify({ error: 'Missing endpoint' }), { 
+        status: 400, 
+        headers: { 'Content-Type': 'application/json', ...corsHeaders } 
+      });
+    }
+
+    const baseUrl = 'https://api.themoviedb.org/3';
+    const url = new URL(`${baseUrl}${endpoint}`);
+    
+    url.searchParams.append('api_key', TMDB_API_KEY);
+    
+    if (params) {
+      Object.keys(params).forEach(key => {
+        url.searchParams.append(key, params[key]);
+      });
+    }
+
+    const tmdbResponse = await fetch(url.toString(), {
       headers: {
-        'Authorization': `Bearer ${API_KEY}`,
         'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
+      }
     });
 
-    const data = await response.json();
+    const data = await tmdbResponse.json();
 
     return new Response(JSON.stringify(data), {
-      status: response.status,
+      status: tmdbResponse.status,
       headers: { 'Content-Type': 'application/json', ...corsHeaders },
     });
 

@@ -1,4 +1,3 @@
-
 import { initializeApp } from 'firebase/app';
 import {
   getAuth,
@@ -13,15 +12,14 @@ import {
 } from 'firebase/auth';
 // @ts-ignore
 import { getFirestore, doc, setDoc, getDoc, getDocs, collection, deleteDoc, query, where, updateDoc, increment, Timestamp, orderBy, serverTimestamp } from 'firebase/firestore';
-import { getFunctions, httpsCallable } from 'firebase/functions';
 import { FIREBASE_CONFIG } from '../config';
 import { Movie, UserProfile, MovieSummary } from '../types';
 
 // Initialize Firebase
 const app = initializeApp(FIREBASE_CONFIG);
 export const auth = getAuth(app);
-export const db = getFirestore(app);
-export const functions = getFunctions(app);
+// Connect to the specific database 'saimilar' instead of '(default)'
+export const db = getFirestore(app, "saimilar");
 
 // === AUTHENTICATION ===
 
@@ -210,7 +208,7 @@ export const getAllUsers = async (): Promise<UserProfile[]> => {
     } catch (error: any) {
         if (error.code === 'permission-denied') {
             console.warn("⚠️ Access to 'users' collection denied.");
-            return [];
+            throw new Error("PERMISSION_DENIED");
         }
         console.error("❌ Error fetching all users:", error);
         return [];
@@ -226,7 +224,7 @@ export const getWishlist = async (uid: string): Promise<Movie[]> => {
         const data = doc.data() as any;
         return { 
           id: data.movieId,
-          ...data
+          ...data 
         } as Movie;
     });
   } catch (error: any) {
@@ -247,7 +245,7 @@ export const addToWishlist = async (uid: string, movie: Movie) => {
     });
     // Increment counter
     await updateDoc(doc(db, "users", uid), { wishlistCount: increment(1) });
-    console.log(`✅ Added "${movie.title}" to wishlist`);
+    // Log removed as requested
   } catch (error: any) {
     console.error('❌ Error adding to wishlist:', error.message);
     throw error;
@@ -259,7 +257,7 @@ export const removeFromWishlist = async (uid: string, movieId: number) => {
     await deleteDoc(doc(db, "users", uid, "wishlist", movieId.toString()));
     // Decrement counter
     await updateDoc(doc(db, "users", uid), { wishlistCount: increment(-1) });
-    console.log('✅ Removed from wishlist');
+    // Log removed as requested
   } catch (error: any) {
     console.error('❌ Error removing from wishlist:', error.message);
     throw error;
@@ -294,14 +292,14 @@ export const addToWatched = async (uid: string, movie: Movie, rating?: number) =
       media_type: movie.media_type || 'movie',
       userRating: rating || 0,
       watchedAt: Timestamp.now()
-    }, { merge: true });
+    }, { merge: true }); // Merge ensures we don't overwrite if it exists
 
     // Increment counter
     await updateDoc(doc(db, "users", uid), { 
         watchedCount: increment(1),
         ratingsCount: rating ? increment(1) : increment(0)
     });
-    console.log(`✅ Added "${movie.title}" to watched`);
+    // Log removed as requested
   } catch (error: any) {
     console.error('❌ Error adding to watched:', error.message);
     throw error;
@@ -313,7 +311,7 @@ export const removeFromWatched = async (uid: string, movieId: number) => {
     await deleteDoc(doc(db, "users", uid, "watched", movieId.toString()));
     // Decrement counter
     await updateDoc(doc(db, "users", uid), { watchedCount: increment(-1) });
-    console.log('✅ Removed from watched');
+    // Log removed as requested
   } catch (error: any) {
     console.error('❌ Error removing from watched:', error.message);
     throw error;
@@ -322,21 +320,26 @@ export const removeFromWatched = async (uid: string, movieId: number) => {
 
 export const updateMovieRating = async (uid: string, movieId: number, rating: number) => {
   try {
+    // We use setDoc with merge:true to act as an upsert. 
+    // If the movie isn't in 'watched' yet (rare but possible via race conditions), this adds it.
     const movieRef = doc(db, "users", uid, "watched", movieId.toString());
+    
+    // Check if document exists to decide whether to increment ratings count
     const docSnap = await getDoc(movieRef);
     const exists = docSnap.exists();
     const oldRating = exists ? (docSnap.data() as any).userRating : 0;
 
     await setDoc(movieRef, { 
         userRating: rating,
-        movieId: movieId 
+        movieId: movieId // Ensure ID is present if creating new
     }, { merge: true });
     
+    // Update global user stats if this is a fresh rating
     if (rating > 0 && (!exists || oldRating === 0)) {
        await updateDoc(doc(db, "users", uid), { ratingsCount: increment(1) });
     }
     
-    console.log(`✅ Rating updated to ${rating} for movie ${movieId}`);
+    // Log removed as requested
   } catch (error: any) {
     console.error('❌ Error updating rating:', error.message);
     throw error;
@@ -347,35 +350,49 @@ export const updateMovieRating = async (uid: string, movieId: number, rating: nu
 
 export const getGlobalMovieSummary = async (movieId: number, lang: string): Promise<MovieSummary | null> => {
   try {
+    // Access global collection "movieDetails" (accessible by any user based on rules)
     const docRef = doc(db, "movieDetails", movieId.toString());
     const docSnap = await getDoc(docRef);
     
     if (docSnap.exists()) {
       const data = docSnap.data() as any;
+      // Structure: { id: 123, aiSummary: { ru: {...}, en: {...} } }
       const summary = data.aiSummary?.[lang];
       return summary || null;
     }
     return null;
   } catch (error: any) {
-    console.error('⚠️ Global summary fetch skipped/failed:', error.message);
+    // Graceful fail for global cache (e.g., offline or very restrictive rules)
+    // console.warn('⚠️ Global summary fetch skipped/failed:', error.message);
     return null;
   }
 };
 
-export const saveGlobalMovieSummary = async (movieId: number, lang: string, summary: MovieSummary) => {
+export const saveGlobalMovieSummary = async (movieId: number, movieTitle: string, lang: string, summary: MovieSummary) => {
   if (!movieId || !summary) return;
   
   try {
     const docRef = doc(db, "movieDetails", movieId.toString());
+    
+    // Construct simplified data object
+    const dataToSave = {
+        title: movieTitle,
+        summary: summary.summary,
+        tone: summary.tone
+    };
+
+    // Use setDoc with merge: true. 
+    // We pass the object structure { aiSummary: { [lang]: summary } }
+    // Firestore's merge behavior will ensure we don't overwrite 'en' when saving 'ru', and vice-versa.
     await setDoc(docRef, {
       id: movieId,
       aiSummary: {
-          [lang]: summary
+          [lang]: dataToSave
       },
       updatedAt: serverTimestamp()
     }, { merge: true });
 
-    console.log(`✅ Saved global summary for ${movieId} (${lang}) to movieDetails`);
+    // Log removed as requested
   } catch (error: any) {
     console.error('❌ Error saving global summary:', error.message);
   }
@@ -391,6 +408,8 @@ const mapUser = (firebaseUser: User, nickname?: string, role?: string): UserProf
   role: role || 'user',
   createdAt: 0
 });
+
+// === SETUP LISTENER ===
 
 export const setupAuthListener = (callback: (user: User | null) => void) => {
   return onAuthStateChanged(auth, callback);

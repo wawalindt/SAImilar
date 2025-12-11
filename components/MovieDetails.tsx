@@ -1,6 +1,5 @@
-
 import React, { useEffect, useState } from 'react';
-import { Movie, MovieSummary, Language } from '../types';
+import { Movie, MovieSummary, Language, AppSettings } from '../types';
 import { generateSpoilerFreeSummary } from '../services/geminiService';
 import { getCachedSummary, cacheSummary } from '../services/storageService';
 import { getGlobalMovieSummary, saveGlobalMovieSummary } from '../services/firebaseService';
@@ -16,6 +15,7 @@ interface MovieDetailsProps {
   userRating?: number;
   onRateMovie: (movie: Movie, rating: number) => void;
   onSaveSummary?: (summary: MovieSummary) => void;
+  settings?: AppSettings; // Added settings prop
 }
 
 const MovieDetails: React.FC<MovieDetailsProps> = ({ 
@@ -28,7 +28,8 @@ const MovieDetails: React.FC<MovieDetailsProps> = ({
     onToggleWishlist,
     userRating,
     onRateMovie,
-    onSaveSummary
+    onSaveSummary,
+    settings
 }) => {
   const [summary, setSummary] = useState<MovieSummary | null>(null);
   const [loadingSummary, setLoadingSummary] = useState(true);
@@ -69,7 +70,8 @@ const MovieDetails: React.FC<MovieDetailsProps> = ({
 
         // 3. Generate with AI
         try {
-            const result = await generateSpoilerFreeSummary(movie.title, movie, language);
+            // Pass settings so it uses the active model (Gemini/Perplexity)
+            const result = await generateSpoilerFreeSummary(movie.title, movie, language, settings);
             
             if (isMounted) {
                 setSummary(result);
@@ -77,7 +79,7 @@ const MovieDetails: React.FC<MovieDetailsProps> = ({
                 
                 // 4. Save to Global Firestore Cache
                 // This works for ANY user if Firestore Rules allow public write for this collection.
-                saveGlobalMovieSummary(movie.id, language, result);
+                saveGlobalMovieSummary(movie.id, movie.title, language, result);
 
                 // Update local cache
                 cacheSummary(movie.id, language, result);
@@ -89,7 +91,7 @@ const MovieDetails: React.FC<MovieDetailsProps> = ({
     };
     fetchSummary();
     return () => { isMounted = false; };
-  }, [movie.id, language]); 
+  }, [movie.id, language, settings]); // Re-run if settings (model) changes
 
   const imageUrl = movie.poster_path 
     ? `https://image.tmdb.org/t/p/w500${movie.poster_path}`

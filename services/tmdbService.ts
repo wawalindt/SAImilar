@@ -1,7 +1,5 @@
-
 import { Movie, Language, MediaType } from '../types';
-import { httpsCallable } from 'firebase/functions';
-import { functions } from './firebaseService';
+import { API_KEYS } from '../config';
 
 const getLangCode = (lang: Language) => lang === 'ru' ? 'ru-RU' : 'en-US';
 
@@ -21,36 +19,58 @@ const normalizeResult = (item: any): Movie => {
   };
 };
 
+// Unified fetcher: Direct Key vs Proxy
 const fetchFromTMDB = async (
   endpoint: string,
   params: Record<string, string> = {},
   lang: Language = 'ru'
 ) => {
   try {
-    const tmdbProxy = httpsCallable(functions, 'tmdbProxy');
-    
-    // Prepare params for the Cloud Function
-    const queryParams = {
-      language: getLangCode(lang),
-      include_adult: 'false',
-      ...params
-    };
+    let url = '';
+    let options: RequestInit = {};
 
-    const result = await tmdbProxy({
-      endpoint: endpoint,
-      params: queryParams
-    });
-    
-    const data = result.data as any;
-    
-    if (data.error) {
-       console.warn('TMDb Proxy Error:', data.error);
-       return { results: [] };
+    // MODE 1: DIRECT (Local Dev with Keys)
+    if (API_KEYS.TMDB) {
+        const baseUrl = 'https://api.themoviedb.org/3';
+        const queryParams = new URLSearchParams({
+            api_key: API_KEYS.TMDB,
+            language: getLangCode(lang),
+            include_adult: 'false',
+            ...params
+        });
+        url = `${baseUrl}${endpoint}?${queryParams.toString()}`;
+        options = {
+            method: 'GET',
+            headers: { 'Content-Type': 'application/json' }
+        };
+    } 
+    // MODE 2: PROXY (Vercel)
+    else {
+        url = '/api/tmdb';
+        options = {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                endpoint: endpoint,
+                params: {
+                    language: getLangCode(lang),
+                    include_adult: 'false',
+                    ...params
+                }
+            })
+        };
     }
 
-    return data;
+    const response = await fetch(url, options);
+
+    if (!response.ok) {
+      console.warn('TMDb Error:', response.status);
+      return { results: [] };
+    }
+
+    return await response.json();
   } catch (error) {
-    console.error('TMDb Fetch Error via Proxy:', error);
+    console.error('TMDb Fetch Error:', error);
     return { results: [] };
   }
 };

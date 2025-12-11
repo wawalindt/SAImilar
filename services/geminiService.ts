@@ -1,11 +1,11 @@
-
 /**
  * Unified AI Analysis Service
- * Secured via Vercel Functions
+ * Supports both Gemini and Perplexity via Vercel Proxy or Direct Call
  */
 
 import { GeminAnalysisResult, MovieSummary, Language, AppSettings, TokenUsageData } from '../types';
 import { getCachedSummary, cacheSummary } from './storageService';
+import { API_KEYS } from '../config';
 import {
   analyzeUserQueryPerplexity,
   callPerplexityAPI,
@@ -57,6 +57,63 @@ STRUCTURE:
 `;
 
 /**
+ * Helper to call Gemini (Direct or Proxy)
+ */
+const callGemini = async (payload: any) => {
+    let response;
+    
+    // Validate and format contents
+    let finalContents = payload.contents;
+    // If string, wrap in Content structure
+    if (typeof finalContents === 'string') {
+        finalContents = [{ parts: [{ text: finalContents }] }];
+    } 
+    // If single object (not array), wrap in array
+    else if (finalContents && !Array.isArray(finalContents)) {
+        finalContents = [finalContents];
+    }
+    
+    // MODE 1: DIRECT
+    if (API_KEYS.GEMINI) {
+        const targetModel = payload.model || 'gemini-2.5-flash';
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${API_KEYS.GEMINI}`;
+        
+        response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contents: finalContents,
+                generationConfig: {
+                    responseMimeType: payload.config?.responseMimeType,
+                    temperature: 0.7,
+                },
+                systemInstruction: payload.config?.systemInstruction ? {
+                     parts: [{ text: payload.config.systemInstruction }] 
+                } : undefined
+            })
+        });
+    } 
+    // MODE 2: PROXY
+    else {
+        response = await fetch('/api/gemini', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                ...payload,
+                contents: finalContents
+            })
+        });
+    }
+
+    if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Gemini Error: ${response.status} ${errorText}`);
+    }
+
+    return await response.json();
+};
+
+/**
  * Analyze user query with automatic provider selection
  */
 export const analyzeUserQuery = async (
@@ -67,9 +124,8 @@ export const analyzeUserQuery = async (
 ): Promise<GeminAnalysisResult & { usage?: TokenUsageData }> => {
   
   let provider = settings?.provider || 'gemini';
-  let model: ModelName = 'sonar'; // Default perplexity model
+  let model: ModelName = 'sonar'; 
 
-  // Determine effective model/provider
   const effectiveModel = settings?.modelOverride || settings?.activeModel;
 
   if (effectiveModel) {
@@ -85,13 +141,18 @@ export const analyzeUserQuery = async (
     if (provider === 'perplexity') {
       return await analyzeUserQueryPerplexity(query, history, language, model, settings);
     } else {
-      // Default to Gemini
       return await analyzeUserQueryGemini(query, history, language, settings);
     }
   } catch (error: any) {
-    console.error(`Error with ${provider} provider:`, error);
+    const errorMsg = error?.message || String(error);
+    const isNetworkError = errorMsg.includes("blocked") || errorMsg.includes("CORS") || errorMsg.includes("NetworkError");
+
+    if (isNetworkError && provider === 'perplexity') {
+       console.warn(`⚠️ Perplexity API unavailable (likely CORS). seamless fallback to Gemini.`);
+    } else {
+       console.error(`Error with ${provider} provider:`, error);
+    }
     
-    // Fallback to Gemini if Perplexity fails
     if (provider === 'perplexity' && !settings?.modelOverride) {
       return await analyzeUserQueryGemini(query, history, language, settings);
     }
@@ -100,7 +161,7 @@ export const analyzeUserQuery = async (
 };
 
 /**
- * Gemini-specific analysis (Via Vercel API)
+ * Gemini-specific analysis
  */
 const analyzeUserQueryGemini = async (
   query: string,
@@ -115,7 +176,11 @@ const analyzeUserQueryGemini = async (
       : "IMPORTANT: The 'chat_response' and 'label' in 'suggested_filters' MUST BE IN ENGLISH. 'recommended_titles' MUST be in English.";
 
     const recentHistory = history.slice(-6).join('\n');
-    const prompt = `
+
+    // Call Unified Fetcher
+    const data = await callGemini({
+      model: 'gemini-2.5-flash',
+      contents: `
 Conversation History:
 ${recentHistory}
 
@@ -126,29 +191,20 @@ Instructions:
 - If input is a filter click (e.g. "Applying filter: Thriller"), REFINE the previous recommendations.
 - Generate specific 'recommended_titles'.
 - Respond ONLY with valid JSON.
-      `;
-
-    // Call Vercel Function
-    const response = await fetch('/api/gemini', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            contents: prompt,
-            systemInstruction: SYSTEM_PROMPT + "\n" + langInstruction,
-            responseMimeType: "application/json",
-            model: 'gemini-2.5-flash'
-        })
+      `,
+      config: {
+        systemInstruction: SYSTEM_PROMPT + "\n" + langInstruction,
+        responseMimeType: "application/json",
+      }
     });
 
-    if (!response.ok) throw new Error("Gemini API call failed");
+    const response = data;
+    let text = response.candidates?.[0]?.content?.parts?.[0]?.text;
 
-    const data = await response.json();
-    let text = data.text;
-    
-    if (!text) throw new Error("No response from Gemini API");
+    if (!text) throw new Error("No response from Gemini");
 
     // Capture Token Usage
-    const usageMeta = data.usageMetadata;
+    const usageMeta = response.usageMetadata;
     const inputTokens = usageMeta?.promptTokenCount || 0;
     const outputTokens = usageMeta?.candidatesTokenCount || 0;
     const totalTokens = usageMeta?.totalTokenCount || (inputTokens + outputTokens);
@@ -166,7 +222,6 @@ Instructions:
         responseTime: Date.now() - startTime
     };
 
-    // CLEANUP: Remove markdown code blocks if present
     text = text.replace(/^```json\s*/, "").replace(/^```\s*/, "").replace(/\s*```$/, "").trim();
 
     try {
@@ -179,9 +234,10 @@ Instructions:
 
   } catch (error: any) {
     console.error("Gemini Analysis Error:", error);
-    
-    const errStr = JSON.stringify(error);
-    const isQuotaError = errStr.includes("429") || errStr.includes("RESOURCE_EXHAUSTED");
+
+    const isQuotaError = JSON.stringify(error).includes("429") ||
+      JSON.stringify(error).includes("RESOURCE_EXHAUSTED") ||
+      JSON.stringify(error).includes("quota");
 
     if (isQuotaError) {
       return {
@@ -211,7 +267,7 @@ Instructions:
 };
 
 /**
- * Generate spoiler-free summary (primarily uses Gemini, can use Perplexity as fallback)
+ * Generate spoiler-free summary
  */
 export const generateSpoilerFreeSummary = async (
   movieTitle: string,
@@ -219,20 +275,33 @@ export const generateSpoilerFreeSummary = async (
   language: Language = 'ru',
   settings?: AppSettings
 ): Promise<MovieSummary> => {
-  // Check cache first
   const cached = getCachedSummary(movieData.id, language);
   if (cached) {
     return cached;
   }
 
   try {
-    const provider = settings?.provider || 'gemini';
+    let provider = settings?.provider || 'gemini';
+    let model: ModelName = 'sonar';
+    
+    // Logic to respect the active model selected in UI
+    const effectiveModel = settings?.modelOverride || settings?.activeModel;
+    if (effectiveModel) {
+        if (effectiveModel === 'gemini') {
+            provider = 'gemini';
+        } else {
+            provider = 'perplexity';
+            model = effectiveModel as ModelName;
+        }
+    }
+
     let summary: MovieSummary;
 
     if (provider === 'perplexity') {
       try {
-        summary = await generateSummaryPerplexity(movieTitle, movieData, language, settings);
+        summary = await generateSummaryPerplexity(movieTitle, movieData, language, model, settings);
       } catch (e) {
+        console.warn("Perplexity summary failed, falling back to Gemini", e);
         summary = await generateSummaryGemini(movieTitle, movieData, language, settings);
       }
     } else {
@@ -251,15 +320,13 @@ export const generateSpoilerFreeSummary = async (
   }
 };
 
-/**
- * Gemini-based summary generation (Via Vercel API)
- */
 const generateSummaryGemini = async (
   movieTitle: string,
   movieData: any,
   language: Language = 'ru',
   settings?: AppSettings
 ): Promise<MovieSummary> => {
+  
   const langInstruction = language === 'ru' ? "WRITE THE SUMMARY IN RUSSIAN." : "WRITE THE SUMMARY IN ENGLISH.";
 
   const prompt = `
@@ -282,20 +349,14 @@ Output JSON:
 }
   `;
 
-  const response = await fetch('/api/gemini', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-          contents: prompt,
-          responseMimeType: "application/json",
-          model: 'gemini-2.5-flash'
-      })
+  // Proxy Call
+  const data = await callGemini({
+    model: 'gemini-2.5-flash',
+    contents: prompt,
+    config: { responseMimeType: "application/json" }
   });
 
-  if (!response.ok) throw new Error("Gemini API call failed");
-  const data = await response.json();
-  let text = data.text;
-
+  let text = data.candidates?.[0]?.content?.parts?.[0]?.text;
   if (text) {
       text = text.replace(/^```json\s*/, "").replace(/^```\s*/, "").replace(/\s*```$/, "").trim();
       return JSON.parse(text) as MovieSummary;
@@ -303,13 +364,11 @@ Output JSON:
   throw new Error("Empty response for summary");
 };
 
-/**
- * Perplexity-based summary generation
- */
 const generateSummaryPerplexity = async (
   movieTitle: string,
   movieData: any,
   language: Language = 'ru',
+  model: ModelName = 'sonar',
   settings?: AppSettings
 ): Promise<MovieSummary> => {
   const langInstruction = language === 'ru' ? "WRITE THE SUMMARY IN RUSSIAN." : "WRITE THE SUMMARY IN ENGLISH.";
@@ -336,7 +395,7 @@ Respond ONLY with valid JSON:
 
   const { response } = await callPerplexityAPI(
     prompt,
-    'sonar',
+    model, // Use the passed model
     settings
   );
 

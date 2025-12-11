@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { AppSettings, AIProvider, UserProfile, TestLogEntry } from '../types';
 import { getAvailableModels, ModelName } from '../services/perplexityService';
@@ -33,6 +32,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
   const [activeTab, setActiveTab] = useState<'settings' | 'users' | 'test'>('settings');
   const [usersList, setUsersList] = useState<UserProfile[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
+  const [permissionError, setPermissionError] = useState(false);
 
   const logsEndRef = useRef<HTMLDivElement>(null);
 
@@ -45,9 +45,18 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     if (isOpen && activeTab === 'users') {
       const fetchUsers = async () => {
           setLoadingUsers(true);
-          const users = await getAllUsers();
-          setUsersList(users);
-          setLoadingUsers(false);
+          setPermissionError(false);
+          try {
+              const users = await getAllUsers();
+              setUsersList(users);
+          } catch (e: any) {
+              if (e.message === 'PERMISSION_DENIED') {
+                  setPermissionError(true);
+              }
+              setUsersList([]);
+          } finally {
+              setLoadingUsers(false);
+          }
       };
       fetchUsers();
     }
@@ -158,12 +167,48 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                 </div>
               </div>
 
-              <div className="p-4 bg-primary/10 border border-primary/20 rounded-lg">
-                  <h4 className="text-white font-bold text-sm mb-1"><i className="fa-solid fa-shield-halved"></i> Secure Mode Active</h4>
-                  <p className="text-xs text-textMuted">
-                      API Keys are now securely managed on the server (Firebase Cloud Functions). 
-                      You do not need to enter keys here anymore.
-                  </p>
+              <div>
+                <label className="block text-textMuted text-xs uppercase font-bold mb-2">
+                  🔑 API Keys
+                </label>
+                <div className="space-y-2">
+                  <div className="relative">
+                    <span className="absolute left-3 top-2 text-textMuted text-xs">Gemini</span>
+                    <input
+                      type="password"
+                      value={localSettings.apiKeys?.gemini || ''}
+                      onChange={(e) =>
+                        setLocalSettings({
+                          ...localSettings,
+                          apiKeys: {
+                            ...localSettings.apiKeys,
+                            gemini: e.target.value,
+                          },
+                        })
+                      }
+                      placeholder="AIzaSy..."
+                      className="w-full bg-background border border-surfaceHover rounded-lg pl-20 pr-4 py-2 text-sm text-white focus:border-primary outline-none"
+                    />
+                  </div>
+                  <div className="relative">
+                    <span className="absolute left-3 top-2 text-textMuted text-xs">Perplexity</span>
+                    <input
+                      type="password"
+                      value={localSettings.apiKeys?.perplexity || ''}
+                      onChange={(e) =>
+                        setLocalSettings({
+                          ...localSettings,
+                          apiKeys: {
+                            ...localSettings.apiKeys,
+                            perplexity: e.target.value,
+                          },
+                        })
+                      }
+                      placeholder="pplx-..."
+                      className="w-full bg-background border border-surfaceHover rounded-lg pl-20 pr-4 py-2 text-sm text-white focus:border-primary outline-none"
+                    />
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -173,10 +218,47 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
             <div className="space-y-4">
               <h3 className="text-white font-bold mb-4 flex items-center justify-between">
                   <span>👥 Registered Users (Firestore)</span>
-                  <button onClick={() => { setLoadingUsers(true); getAllUsers().then(u => { setUsersList(u); setLoadingUsers(false); }); }} className="text-xs text-primary hover:underline">
+                  <button onClick={() => { setLoadingUsers(true); getAllUsers().then(u => { setUsersList(u); setLoadingUsers(false); }).catch(e => { if(e.message === 'PERMISSION_DENIED') setPermissionError(true); setLoadingUsers(false); }); }} className="text-xs text-primary hover:underline">
                       <i className="fa-solid fa-rotate"></i> Refresh
                   </button>
               </h3>
+              
+              {permissionError && (
+                  <div className="bg-red-500/10 border border-red-500/50 p-4 rounded-lg text-sm mb-4">
+                      <h4 className="text-red-400 font-bold mb-2"><i className="fa-solid fa-triangle-exclamation"></i> ACCESS DENIED TO USER LIST</h4>
+                      <p className="text-textMuted mb-2">
+                          Your Web App Client does not have permission to list all users. 
+                          Being a "Firebase Admin" in the console only gives <b>you</b> access, not the <b>app code</b>.
+                      </p>
+                      <p className="text-white font-semibold mb-2">To fix this, go to Firebase Console -&gt; Firestore Database -&gt; Rules and paste this:</p>
+                      <pre className="bg-black/50 p-3 rounded text-xs text-green-300 overflow-x-auto select-all">
+{`rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // 1. Allow user to read/write their OWN profile
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // 2. Allow ADMIN (You) to read ALL users
+    // This checks if the requesting user has "role: 'admin'" in their profile
+    match /users/{document=**} {
+       allow read: if request.auth != null && 
+       get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // 3. Allow Global Movie Details (Public Read)
+    match /movieDetails/{movieId} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+  }
+}`}
+                      </pre>
+                  </div>
+              )}
+
               {loadingUsers ? (
                   <div className="flex justify-center p-8">
                       <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
@@ -232,7 +314,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                             </td>
                         </tr>
                         ))}
-                        {usersList.length === 0 && (
+                        {usersList.length === 0 && !permissionError && (
                         <tr>
                             <td colSpan={5} className="px-4 py-8 text-center opacity-50">
                             No users found (or insufficient permissions)
@@ -387,6 +469,22 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                             </div>
                           )}
 
+                          {log.response?.recommended_titles &&
+                            log.response.recommended_titles.length > 0 && (
+                              <div>
+                                <span className="text-textMuted font-bold uppercase text-[9px] block mb-1">
+                                  Recommendations
+                                </span>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {log.response.recommended_titles.map((title, i) => (
+                                    <span key={i} className="bg-primary/10 border border-primary/20 text-primary px-2 py-1 rounded text-[10px] font-medium">
+                                      {title}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
                           {log.error && (
                             <div className="text-xs text-red-300 bg-red-900/10 border border-red-500/20 p-2 rounded">
                               {log.error}
@@ -410,6 +508,14 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
           >
             Close
           </button>
+          {activeTab === 'settings' && (
+            <button
+              onClick={handleSave}
+              className="px-6 py-2 rounded-lg text-sm font-medium bg-primary text-white hover:bg-red-700 shadow-lg shadow-primary/20 transition-all"
+            >
+              Save Changes
+            </button>
+          )}
         </div>
       </div>
     </div>

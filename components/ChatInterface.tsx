@@ -16,6 +16,7 @@ interface ChatInterfaceProps {
   onRandom: () => void;
   activeModel: string;
   onModelChange: (model: string) => void;
+  userRole?: string; // Added userRole to control model visibility
 }
 
 const ChatInterface: React.FC<ChatInterfaceProps> = ({ 
@@ -31,7 +32,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     t,
     onRandom,
     activeModel,
-    onModelChange
+    onModelChange,
+    userRole
 }) => {
   const [input, setInput] = useState('');
   const [isListening, setIsListening] = useState(false);
@@ -93,14 +95,22 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   };
 
   // Models display names mapping
-  const models = [
-      { id: 'gemini', name: 'Gemini 3 Pro' },
-      { id: 'sonar', name: 'Sonar (Fast)' },
-      { id: 'gpt4', name: 'GPT-5.1' },
-      { id: 'claude', name: 'Claude Sonnet 4.5' },
-      { id: 'grok', name: 'Grok 4.1' },
-      { id: 'kimi', name: 'Thinking Kimi K2' },
+  const allModels = [
+      { id: 'gemini', name: 'Gemini 3 Pro', adminOnly: true },
+      { id: 'sonar', name: 'Sonar (Fast)', adminOnly: false },
+      { id: 'gpt4', name: 'GPT-5.1', adminOnly: false },
+      { id: 'claude', name: 'Claude Sonnet 4.5', adminOnly: false },
+      { id: 'grok', name: 'Grok 4.1', adminOnly: false },
+      { id: 'kimi', name: 'Thinking Kimi K2', adminOnly: false },
   ];
+
+  // Filter models based on user role
+  const availableModels = allModels.filter(m => {
+      if (m.adminOnly) {
+          return userRole === 'admin' || userRole === 'owner';
+      }
+      return true;
+  });
 
   return (
     <div className="flex flex-col h-full bg-surface border-r border-surfaceHover transition-colors duration-300">
@@ -122,7 +132,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                     className="bg-surface text-[10px] sm:text-xs font-medium text-textMain border border-white/10 rounded px-1.5 py-1 outline-none hover:border-white/30 transition-colors cursor-pointer appearance-none w-full truncate"
                     title="Select AI Model"
                 >
-                    {models.map(m => (
+                    {availableModels.map(m => (
                         <option key={m.id} value={m.id} className="bg-surface text-textMain">
                             {m.name}
                         </option>

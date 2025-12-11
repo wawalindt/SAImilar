@@ -1,5 +1,5 @@
 {
-  "name": "saimilar-v.0.98",
+  "name": "saimilar-v.0.99-depl-vercel",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -9,13 +9,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@google/genai": "^1.32.0",
-    "@vercel/node": "^5.5.15",
-    "firebase": "^12.6.0",
-    "firebase-functions": "^7.0.1",
-    "next": "^16.0.5",
+    "@google/genai": "^1.30.0",
+    "react-dom": "^19.2.0",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "next": "^16.0.5",
+    "firebase": "^12.6.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

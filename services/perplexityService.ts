@@ -1,19 +1,14 @@
-
-// src/services/perplexityService.ts
 import { GeminAnalysisResult, Language, AppSettings, TokenUsageData } from '../types';
 import { SYSTEM_PROMPT } from './geminiService';
+import { API_KEYS } from '../config';
 
 export type { TokenUsageData };
 
 const MODELS = {
-  // Standard
   sonar: { id: 'sonar', name: 'Sonar', inputCost: 0.001, outputCost: 0.001 },
-  // High Intelligence
   gpt4: { id: 'sonar-pro', name: 'GPT-5.1 (via Sonar Pro)', inputCost: 0.003, outputCost: 0.015 },
   claude: { id: 'sonar-pro', name: 'Claude Sonnet 4.5 (via Sonar Pro)', inputCost: 0.003, outputCost: 0.015 },
-  // Speed
   grok: { id: 'sonar', name: 'Grok 4.1 (via Sonar)', inputCost: 0.001, outputCost: 0.001 },
-  // Reasoning
   kimi: { id: 'sonar-reasoning', name: 'Thinking Kimi K2 (via Sonar Reasoning)', inputCost: 0.003, outputCost: 0.015 },
 };
 
@@ -41,7 +36,9 @@ export const tokenLogger = new TokenLogger();
 const sanitizeMessages = (messages: any[]) => {
     const sanitized: any[] = [];
     const systemMsg = messages.find(m => m.role === 'system');
-    if (systemMsg) sanitized.push(systemMsg);
+    if (systemMsg) {
+        sanitized.push(systemMsg);
+    }
 
     let conversation = messages
         .filter(m => m.role !== 'system')
@@ -66,9 +63,7 @@ const sanitizeMessages = (messages: any[]) => {
     return sanitized;
 };
 
-/**
- * Main Analysis Function (Via Vercel API)
- */
+// Main Analysis Function - Supports Dual Mode (Direct vs Proxy)
 export const analyzeUserQueryPerplexity = async (
   query: string,
   history: string[],
@@ -81,7 +76,6 @@ export const analyzeUserQueryPerplexity = async (
   try {
     const modelConfig = MODELS[model] || MODELS.sonar; 
 
-    // Prepare Prompt
     const recentHistory = history.slice(-6);
     const langInstruction = language === 'ru'
         ? "IMPORTANT: The 'chat_response' and 'label' in 'suggested_filters' MUST BE IN RUSSIAN. 'recommended_titles' MUST be in English."
@@ -100,29 +94,48 @@ export const analyzeUserQueryPerplexity = async (
 
     const messages = sanitizeMessages(rawMessages);
 
-    console.log(`[Perplexity] Calling Vercel Function for ${modelConfig.name}...`);
-    
-    // Call Vercel Function
-    const response = await fetch('/api/perplexity', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            model: modelConfig.id,
-            messages: messages,
-            temperature: 0.7,
-            max_tokens: 3000
-        })
-    });
+    let response;
+
+    // MODE 1: DIRECT (May fail due to CORS on Perplexity)
+    if (API_KEYS.PERPLEXITY) {
+        response = await fetch('https://api.perplexity.ai/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${API_KEYS.PERPLEXITY}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                model: modelConfig.id,
+                messages: messages,
+                temperature: 0.7,
+                max_tokens: 3000,
+            })
+        });
+    } 
+    // MODE 2: PROXY
+    else {
+        response = await fetch('/api/perplexity', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                model: modelConfig.id,
+                messages: messages,
+                temperature: 0.7,
+                max_tokens: 3000,
+            })
+        });
+    }
 
     if (!response.ok) {
         const errText = await response.text();
-        throw new Error(`Perplexity API Error: ${response.status} - ${errText}`);
+        throw new Error(`API Error ${response.status}: ${errText}`);
     }
 
     const data = await response.json();
-    if (data.error) throw new Error(data.error);
-
     const responseTime = Date.now() - startTime;
+
     const inputTokens = data.usage?.prompt_tokens || 0;
     const outputTokens = data.usage?.completion_tokens || 0;
     const totalTokens = inputTokens + outputTokens;

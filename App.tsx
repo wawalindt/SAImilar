@@ -158,6 +158,9 @@ const App: React.FC = () => {
     ]
   });
 
+  // --- ACTIVE MODEL STATE ---
+  const [activeModel, setActiveModel] = useState<string>(settings.activeModel || 'gpt4');
+
   // --- FIREBASE AUTH & SYNC ---
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -183,7 +186,12 @@ const App: React.FC = () => {
             // Load user-specific active model
             const savedModel = localStorage.getItem(`saimilar_model_${user.uid}`);
             if (savedModel) {
-                setActiveModel(savedModel);
+                // Security Check: If saved model is Gemini but user is not admin, fallback
+                if (savedModel === 'gemini' && userProfile.role !== 'admin' && userProfile.role !== 'owner') {
+                     setActiveModel('gpt4');
+                } else {
+                     setActiveModel(savedModel);
+                }
             }
         } else {
             // Logged Out - RESET EVERYTHING
@@ -199,7 +207,18 @@ const App: React.FC = () => {
         }
     });
     return () => unsubscribe();
-  }, [language]); // Depend on language to update init msg translation if needed
+  }, [language]); 
+
+  // Security Effect: Watch for role changes or login state to enforce model restriction
+  useEffect(() => {
+     if (activeModel === 'gemini') {
+         const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'owner';
+         if (!isAdmin) {
+             console.warn("Restricted model detected for non-admin. Switching to default.");
+             handleModelChange('gpt4');
+         }
+     }
+  }, [currentUser, activeModel]);
 
   // Sync settings when language/theme changes
   useEffect(() => {
@@ -239,9 +258,6 @@ const App: React.FC = () => {
   const [testLogs, setTestLogs] = useState<TestLogEntry[]>([]);
   const [isTestMode, setIsTestMode] = useState(false);
   const [testModels, setTestModels] = useState<(ModelName | 'gemini')[]>([]);
-
-  // --- ACTIVE MODEL STATE ---
-  const [activeModel, setActiveModel] = useState<string>(settings.activeModel || 'gpt4');
 
   const resultsEndRef = useRef<HTMLDivElement>(null);
 
@@ -762,6 +778,7 @@ const App: React.FC = () => {
                 onRandom={handleRandom}
                 activeModel={activeModel}
                 onModelChange={handleModelChange}
+                userRole={currentUser?.role} // Pass role to ChatInterface
             />
         </div>
         <div className="p-4 bg-surface/50 border-t border-white/5 flex justify-between items-center text-xs pb-20 md:pb-4 flex-shrink-0">
@@ -814,6 +831,7 @@ const App: React.FC = () => {
                 userRating={selectedMovie.userRating}
                 onRateMovie={handleRateMovie}
                 onSaveSummary={(s) => handleSaveSummary(selectedMovie, s)}
+                settings={{ ...settings, activeModel }} // Pass current model settings
             />
         ) : (
             <>
