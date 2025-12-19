@@ -94,12 +94,12 @@ const MovieDetails: React.FC<MovieDetailsProps> = ({
   }, [movie.id, language, settings]); // Re-run if settings (model) changes
 
   const imageUrl = movie.poster_path 
-    ? `https://image.tmdb.org/t/p/w500${movie.poster_path}`
+    ? `/api/image-proxy?path=${encodeURIComponent(movie.poster_path)}&size=w500`
     : `https://picsum.photos/seed/${movie.id}/300/450`;
-
+  
   const backdropUrl = movie.backdrop_path
-    ? `https://image.tmdb.org/t/p/w1280${movie.backdrop_path}`
-    : `https://picsum.photos/seed/${movie.id}/1280/720`;
+    ? `/api/image-proxy?path=${encodeURIComponent(movie.backdrop_path)}&size=w780`
+    : undefined;
 
   const handleRatingClick = (rating: number) => {
       onRateMovie(movie, rating);
