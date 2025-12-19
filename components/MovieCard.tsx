@@ -20,7 +20,7 @@ const MovieCard: React.FC<MovieCardProps> = ({
     onToggleWishlist
 }) => {
   const imageUrl = movie.poster_path 
-    ? `https://image.tmdb.org/t/p/w500${movie.poster_path}`
+    ? `/api/image-proxy?path=${encodeURIComponent(movie.poster_path)}&size=w500`
     : `https://picsum.photos/seed/${movie.id}/300/450`;
 
   const year = movie.release_date ? movie.release_date.split('-')[0] : 'N/A';
